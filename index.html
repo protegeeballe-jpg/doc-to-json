@@ -3,39 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF to JSON Converter</title>
+    <title>Faithful PDF to JSON Converter</title>
     <!-- Include PDF.js library from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background: #f4f4f9; }
+        body { font-family: Arial, sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; text-align: center; background: #f4f4f9; }
         .drop-zone { border: 2px dashed #007bff; padding: 40px; background: #fff; cursor: pointer; border-radius: 8px; margin-bottom: 20px; }
         .drop-zone:hover { background: #f1f8ff; }
-        textarea { width: 100%; height: 200px; margin-top: 15px; padding: 10px; font-family: monospace; border-radius: 5px; border: 1px solid #ccc; }
+        textarea { width: 100%; height: 250px; margin-top: 15px; padding: 10px; font-family: monospace; border-radius: 5px; border: 1px solid #ccc; }
         button { background: #007bff; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; }
         button:hover { background: #0056b3; }
+        #status { font-weight: bold; color: #555; margin: 10px 0; }
     </style>
 </head>
 <body>
 
-    <h2>PDF to JSON Browser Converter</h2>
-    <p>Upload a PDF file to extract its text into structured JSON instantly.</p>
+    <h2>Faithful PDF to JSON Converter</h2>
+    <p>Upload a PDF to extract structured text cleanly ordered by layout coordinates.</p>
 
     <div class="drop-zone" id="dropZone">
         <input type="file" id="fileInput" accept=".pdf" style="display: none;">
-        <p>Click here or drag & drop a PDF file</p>
+        <p>Click here or drag & drop your PDF file</p>
     </div>
 
-    <button id="downloadBtn" style="display:none;">Download JSON File</button>
-    <textarea id="output" placeholder="JSON output will appear here..."></textarea>
+    <div id="status"></div>
+    <button id="downloadBtn" style="display:none;">Download Structured JSON</button>
+    <textarea id="output" placeholder="Structured JSON output will appear here..."></textarea>
 
     <script>
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
         const outputArea = document.getElementById('output');
         const downloadBtn = document.getElementById('downloadBtn');
+        const statusDiv = document.getElementById('status');
         let jsonString = '';
 
-        dropZone.click = () => fileInput.click();
         dropZone.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', handleFile);
 
@@ -43,32 +45,76 @@
             const file = e.target.files[0];
             if (!file) return;
 
+            statusDiv.textContent = "Processing and sorting PDF layout...";
             const reader = new FileReader();
             reader.readAsArrayBuffer(file);
             reader.onload = async function() {
-                const typedarray = new Uint8Array(this.result);
-                
-                // Load PDF using PDF.js
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-                const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                
-                let fullText = {};
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
-                    const pageText = textContent.items.map(item => item.str).join(' ');
-                    fullText[`page_${i}`] = pageText;
+                try {
+                    const typedarray = new Uint8Array(this.result);
+                    
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+                    const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                    
+                    let structuredPages = [];
+
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        
+                        // 1. Sort text items by Y (top-to-bottom) and then X (left-to-right) coordinates
+                        const items = textContent.items.sort((a, b) => {
+                            const yA = a.transform[5];
+                            const yB = b.transform[5];
+                            const xA = a.transform[4];
+                            const xB = b.transform[4];
+                            
+                            // If Y coordinates are close (same line, within ~5 pixels), sort by X
+                            if (Math.abs(yA - yB) > 5) {
+                                return yB - yA; // PDF Y-coordinates start from bottom, so higher Y is top
+                            }
+                            return xA - xB; // Left to right
+                        });
+
+                        // 2. Group items into clean visual lines
+                        let lines = [];
+                        let currentLine = [];
+                        let lastY = null;
+
+                        items.forEach(item => {
+                            let y = item.transform[5];
+                            if (lastY === null || Math.abs(y - lastY) > 5) {
+                                if (currentLine.length > 0) {
+                                    lines.push(currentLine.map(i => i.str).join(' '));
+                                    currentLine = [];
+                                }
+                                lastY = y;
+                            }
+                            currentLine.push(item);
+                        });
+                        if (currentLine.length > 0) {
+                            lines.push(currentLine.map(i => i.str).join(' '));
+                        }
+
+                        structuredPages.push({
+                            pageNumber: i,
+                            lines: lines
+                        });
+                    }
+
+                    const resultObject = {
+                        fileName: file.name,
+                        totalPages: pdf.numPages,
+                        pages: structuredPages
+                    };
+
+                    jsonString = JSON.stringify(resultObject, null, 2);
+                    outputArea.value = jsonString;
+                    downloadBtn.style.display = 'inline-block';
+                    statusDiv.textContent = "Conversion complete and accurately sorted!";
+                } catch (err) {
+                    statusDiv.textContent = "Error processing PDF.";
+                    console.error(err);
                 }
-
-                const resultObject = {
-                    fileName: file.name,
-                    totalPages: pdf.numPages,
-                    content: fullText
-                };
-
-                jsonString = JSON.stringify(resultObject, null, 2);
-                outputArea.value = jsonString;
-                downloadBtn.style.display = 'inline-block';
             };
         }
 
@@ -77,7 +123,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'converted.json';
+            a.download = 'faithful_converted.json';
             a.click();
         });
     </script>
