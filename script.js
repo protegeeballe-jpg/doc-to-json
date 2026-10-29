@@ -34,74 +34,40 @@ dropZone.addEventListener('drop', (e) => {
 
 fileInput.addEventListener('change', handleFile);
 
+// Universal Main File Router (Phase 2)
 async function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (file.type !== 'application/pdf') {
-        alert('Invalid file type. Please upload a valid PDF document.');
-        return;
-    }
-
+    const fileName = file.name;
+    const fileExt = fileName.split('.').pop().toLowerCase();
     const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-    fileInfo.textContent = `Selected File: ${file.name} (${fileSizeMB} MB)`;
     
+    fileInfo.textContent = `Selected File: ${fileName} (${fileSizeMB} MB)`;
     progressContainer.classList.remove('hidden');
-    updateProgress(10, 'Reading file buffer...');
+    updateProgress(10, `Routing parser for .${fileExt} file...`);
 
     try {
-        const arrayBuffer = await file.arrayBuffer();
-        
-        const loadingTask = pdfjsLib.getDocument({
-            data: arrayBuffer,
-            password: '' 
-        });
+        let resultObject = null;
 
-        const pdfDoc = await loadingTask.promise;
-        const numPages = pdfDoc.numPages;
-        const structuredPages = [];
-
-        for (let i = 1; i <= numPages; i++) {
-            const percent = 10 + Math.floor((i / numPages) * 80);
-            updateProgress(percent, `Processing page ${i} of ${numPages}...`);
-            
-            const page = await pdfDoc.getPage(i);
-            const textContent = await page.getTextContent();
-            const viewport = page.getViewport({ scale: 1.0 });
-
-            // Extract items with coordinate values
-            const textItems = textContent.items.map(item => ({
-                text: item.str,
-                x: item.transform[4],
-                y: item.transform[5],
-                width: item.width,
-                height: item.height,
-                fontName: item.fontName
-            }));
-
-            // Layout-aware column sorting
-            const sortedBlocks = sortTextByColumnsAndReadingOrder(textItems, viewport.width);
-            
-            structuredPages.push({
-                pageNumber: i,
-                width: viewport.width,
-                height: viewport.height,
-                layout: sortedBlocks
-            });
+        if (fileExt === 'pdf') {
+            resultObject = await parsePDF(file);
+        } else if (fileExt === 'txt') {
+            resultObject = await parseTXT(file);
+        } else if (fileExt === 'json') {
+            resultObject = await parseJSONFile(file);
+        } else if (fileExt === 'csv' || fileExt === 'xlsx' || fileExt === 'xls') {
+            resultObject = await parseSpreadsheet(file, fileExt);
+        } else {
+            throw new Error(`Unsupported file format: .${fileExt}`);
         }
-
-        const resultObject = {
-            fileName: file.name,
-            totalPages: numPages,
-            pages: structuredPages
-        };
 
         jsonString = JSON.stringify(resultObject, null, 2);
         outputArea.value = jsonString;
         downloadBtn.style.display = 'inline-block';
 
         updateProgress(100, 'Conversion complete!');
-        statusDiv.textContent = "Conversion complete with advanced column sorting!";
+        statusDiv.textContent = `Successfully parsed .${fileExt} document!`;
 
     } catch (error) {
         if (error.name === 'PasswordException') {
@@ -110,12 +76,65 @@ async function handleFile(e) {
                 // Handle password logic if needed
             }
         } else {
-            console.error('PDF Extraction Error:', error);
-            alert('Failed to parse PDF. The file may be corrupted or unreadable.');
+            console.error('Extraction Error:', error);
+            statusDiv.textContent = `Error processing file: ${error.message}`;
+            alert(`Failed to parse file: ${error.message}`);
         }
     } finally {
         setTimeout(() => progressContainer.classList.add('hidden'), 2500);
     }
+}
+
+// -------------------------------------------------------------
+// Parser 1: PDF Parser (Preserving your advanced column sorting)
+// -------------------------------------------------------------
+async function parsePDF(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    
+    const loadingTask = pdfjsLib.getDocument({
+        data: arrayBuffer,
+        password: '' 
+    });
+
+    const pdfDoc = await loadingTask.promise;
+    const numPages = pdfDoc.numPages;
+    const structuredPages = [];
+
+    for (let i = 1; i <= numPages; i++) {
+        const percent = 10 + Math.floor((i / numPages) * 80);
+        updateProgress(percent, `Processing PDF page ${i} of ${numPages}...`);
+        
+        const page = await pdfDoc.getPage(i);
+        const textContent = await page.getTextContent();
+        const viewport = page.getViewport({ scale: 1.0 });
+
+        // Extract items with coordinate values
+        const textItems = textContent.items.map(item => ({
+            text: item.str,
+            x: item.transform[4],
+            y: item.transform[5],
+            width: item.width,
+            height: item.height,
+            fontName: item.fontName
+        }));
+
+        // Layout-aware column sorting
+        const sortedBlocks = sortTextByColumnsAndReadingOrder(textItems, viewport.width);
+        
+        structuredPages.push({
+            pageNumber: i,
+            width: viewport.width,
+            height: viewport.height,
+            layout: sortedBlocks
+        });
+    }
+
+    return {
+        fileName: file.name,
+        fileType: 'pdf',
+        totalPages: numPages,
+        pages: structuredPages
+    };
 }
 
 // Multi-column sorting algorithm to prevent text interleaving
@@ -149,6 +168,62 @@ function sortTextByColumnsAndReadingOrder(items, pageWidth) {
             { columnId: 1, text: leftColumn.map(i => i.text) },
             { columnId: 2, text: rightColumn.map(i => i.text) }
         ]
+    };
+}
+
+// -------------------------------------------------------------
+// Parser 2: TXT Parser (.txt)
+// -------------------------------------------------------------
+async function parseTXT(file) {
+    updateProgress(50, 'Reading text file...');
+    const rawText = await file.text();
+    const lines = rawText.split(/\r?\n/);
+    return {
+        fileName: file.name,
+        fileType: 'txt',
+        totalLines: lines.length,
+        lines: lines
+    };
+}
+
+// -------------------------------------------------------------
+// Parser 3: JSON File Parser & Validator (.json)
+// -------------------------------------------------------------
+async function parseJSONFile(file) {
+    updateProgress(50, 'Validating JSON file...');
+    const rawText = await file.text();
+    try {
+        const parsed = JSON.parse(rawText);
+        return {
+            fileName: file.name,
+            fileType: 'json',
+            validJSON: true,
+            data: parsed
+        };
+    } catch (err) {
+        throw new Error(`Malformed JSON syntax: ${err.message}`);
+    }
+}
+
+// -------------------------------------------------------------
+// Parser 4: Spreadsheet Parser (.csv, .xlsx, .xls)
+// -------------------------------------------------------------
+async function parseSpreadsheet(file, ext) {
+    updateProgress(50, `Parsing ${ext.toUpperCase()} spreadsheet...`);
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+    const sheetsData = {};
+    workbook.SheetNames.forEach(sheetName => {
+        const worksheet = workbook.Sheets[sheetName];
+        sheetsData[sheetName] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+    });
+
+    return {
+        fileName: file.name,
+        fileType: ext,
+        sheetNames: workbook.SheetNames,
+        sheets: sheetsData
     };
 }
 
