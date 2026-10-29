@@ -3,6 +3,7 @@ const fileInput = document.getElementById('fileInput');
 const outputArea = document.getElementById('output');
 const downloadBtn = document.getElementById('downloadBtn');
 const downloadReportBtn = document.getElementById('downloadReportBtn');
+const copyBtn = document.getElementById('copyBtn');
 const statusDiv = document.getElementById('status');
 const fileInfo = document.getElementById('fileInfo');
 const progressContainer = document.getElementById('progressContainer');
@@ -12,7 +13,6 @@ const preserveStringsCheckbox = document.getElementById('preserveStrings');
 
 // Phase 4 UI Elements
 const enableBibleModeCheckbox = document.getElementById('enableBibleMode');
-const bibleOptionsDiv = document.getElementById('bibleOptions');
 const bibleTranslationInput = document.getElementById('bibleTranslation');
 const bibleLanguageSelect = document.getElementById('bibleLanguage');
 const stripFootnotesCheckbox = document.getElementById('stripFootnotes');
@@ -20,16 +20,18 @@ const runValidationCheckbox = document.getElementById('runValidation');
 
 // Phase 5 OCR UI Elements
 const enableOcrCheckbox = document.getElementById('enableOcr');
-const ocrOptionsDiv = document.getElementById('ocrOptions');
 const ocrLanguageSelect = document.getElementById('ocrLanguage');
 const forceOcrAllCheckbox = document.getElementById('forceOcrAll');
 
 // Phase 6 Table Intelligence UI Elements
 const enableTableIntelligenceCheckbox = document.getElementById('enableTableIntelligence');
-const tableIntelligenceOptionsDiv = document.getElementById('tableIntelligenceOptions');
 const spreadsheetStructureSelect = document.getElementById('spreadsheetStructure');
 const extractFormulasCheckbox = document.getElementById('extractFormulas');
 const detectPdfTablesCheckbox = document.getElementById('detectPdfTables');
+
+// Phase 7 Security Limits
+const MAX_FILE_SIZE_MB = 50;
+const ALLOWED_EXTENSIONS = ['pdf', 'txt', 'json', 'csv', 'xlsx', 'xls'];
 
 let jsonString = '';
 let reportString = '';
@@ -37,39 +39,20 @@ let reportString = '';
 // Configure worker for PDF.js using the global version
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-// Toggle UI controls
-if (enableBibleModeCheckbox) {
-    enableBibleModeCheckbox.addEventListener('change', () => {
-        bibleOptionsDiv.classList.toggle('hidden', !enableBibleModeCheckbox.checked);
-    });
-}
-
-if (enableOcrCheckbox) {
-    enableOcrCheckbox.addEventListener('change', () => {
-        ocrOptionsDiv.classList.toggle('hidden', !enableOcrCheckbox.checked);
-    });
-}
-
-if (enableTableIntelligenceCheckbox) {
-    enableTableIntelligenceCheckbox.addEventListener('change', () => {
-        tableIntelligenceOptionsDiv.classList.toggle('hidden', !enableTableIntelligenceCheckbox.checked);
-    });
-}
-
 dropZone.addEventListener('click', () => fileInput.click());
 
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
-    dropZone.classList.add('border-blue-600', 'bg-blue-50');
+    dropZone.classList.add('border-indigo-400', 'bg-slate-800/80');
 });
 
 dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('border-blue-600', 'bg-blue-50');
+    dropZone.classList.remove('border-indigo-400', 'bg-slate-800/80');
 });
 
 dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
-    dropZone.classList.remove('border-blue-600', 'bg-blue-50');
+    dropZone.classList.remove('border-indigo-400', 'bg-slate-800/80');
     if (e.dataTransfer.files.length > 0) {
         fileInput.files = e.dataTransfer.files;
         handleFile({ target: fileInput });
@@ -78,19 +61,33 @@ dropZone.addEventListener('drop', (e) => {
 
 fileInput.addEventListener('change', handleFile);
 
-// Universal Main File Router
+// Universal Main File Router with Phase 7 Security Guards
 async function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
 
     const fileName = file.name;
     const fileExt = fileName.split('.').pop().toLowerCase();
-    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-    
-    fileInfo.textContent = `Selected File: ${fileName} (${fileSizeMB} MB)`;
+    const fileSizeMB = file.size / (1024 * 1024);
+
+    // 1. Phase 7 File Size Cap Safeguard
+    if (fileSizeMB > MAX_FILE_SIZE_MB) {
+        alert(`Security Error: File size (${fileSizeMB.toFixed(2)} MB) exceeds the maximum allowed limit of ${MAX_FILE_SIZE_MB} MB.`);
+        fileInput.value = '';
+        return;
+    }
+
+    // 2. Phase 7 Extension Safeguard
+    if (!ALLOWED_EXTENSIONS.includes(fileExt)) {
+        alert(`Security Error: Unsupported or non-permitted file format (.${fileExt}).`);
+        fileInput.value = '';
+        return;
+    }
+
+    fileInfo.textContent = `Selected File: ${fileName} (${fileSizeMB.toFixed(2)} MB) [Local Sandbox]`;
     progressContainer.classList.remove('hidden');
     downloadReportBtn.style.display = 'none';
-    updateProgress(10, `Routing parser for .${fileExt} file...`);
+    updateProgress(10, `Routing secure parser for .${fileExt} file...`);
 
     try {
         let resultObject = null;
@@ -98,46 +95,38 @@ async function handleFile(e) {
 
         if (fileExt === 'pdf') {
             const rawPdfData = await parsePDF(file);
-            if (isBibleMode) {
-                resultObject = await processBibleData(rawPdfData, file.name);
-            } else {
-                resultObject = rawPdfData;
-            }
+            resultObject = isBibleMode ? await processBibleData(rawPdfData, file.name) : rawPdfData;
         } else if (fileExt === 'txt') {
             const rawTxtData = await parseTXT(file);
-            if (isBibleMode) {
-                resultObject = await processBibleData(rawTxtData, file.name);
-            } else {
-                resultObject = rawTxtData;
-            }
+            resultObject = isBibleMode ? await processBibleData(rawTxtData, file.name) : rawTxtData;
         } else if (fileExt === 'json') {
             resultObject = await parseJSONFile(file);
         } else if (fileExt === 'csv' || fileExt === 'xlsx' || fileExt === 'xls') {
             resultObject = await parseSpreadsheet(file, fileExt);
         } else {
-            throw new Error(`Unsupported file format: .${fileExt}`);
+            throw new Error(`File format strictly not permitted.`);
         }
 
         jsonString = JSON.stringify(resultObject, null, 2);
         outputArea.value = jsonString;
-        downloadBtn.style.display = 'inline-block';
+        downloadBtn.style.display = 'inline-flex';
 
-        updateProgress(100, 'Conversion complete!');
+        updateProgress(100, 'Secure conversion complete!');
         statusDiv.textContent = isBibleMode 
             ? `Successfully converted Bible document to structured canon JSON!`
-            : `Successfully parsed .${fileExt} document with Phase 6 Table Intelligence!`;
+            : `Successfully parsed .${fileExt} document securely!`;
 
     } catch (error) {
-        console.error('Extraction Error:', error);
-        statusDiv.textContent = `Error processing file: ${error.message}`;
-        alert(`Failed to parse file: ${error.message}`);
+        console.error('Phase 7 Exception Sandbox:', error);
+        statusDiv.textContent = `Processing halted due to malformed file structure.`;
+        alert(`Failed to parse file: The document appears to be corrupted or unreadable.`);
     } finally {
         setTimeout(() => progressContainer.classList.add('hidden'), 2500);
     }
 }
 
 // -------------------------------------------------------------
-// Parser 1: PDF Parser with Phase 5 OCR & Phase 6 Table Grid Detection
+// Parser 1: PDF Parser with Phase 5 OCR & Phase 6 Table Detection
 // -------------------------------------------------------------
 async function parsePDF(file) {
     const arrayBuffer = await file.arrayBuffer();
@@ -207,7 +196,6 @@ async function parsePDF(file) {
     };
 }
 
-// Phase 6: PDF Table Grid & Alignment Detection
 function detectTablesInTextItems(items, pageWidth) {
     if (!items || items.length === 0) return [];
 
@@ -335,10 +323,10 @@ async function parseJSONFile(file) {
 }
 
 // -------------------------------------------------------------
-// Parser 4: Phase 6 Spreadsheet & Table Intelligence Parser (.csv, .xlsx, .xls)
+// Parser 4: Phase 6 Spreadsheet & Table Parser (.csv, .xlsx, .xls)
 // -------------------------------------------------------------
 async function parseSpreadsheet(file, ext) {
-    updateProgress(50, `Parsing ${ext.toUpperCase()} spreadsheet with Phase 6 Table Intelligence...`);
+    updateProgress(50, `Parsing ${ext.toUpperCase()} spreadsheet...`);
     const arrayBuffer = await file.arrayBuffer();
     
     const extractFormulas = enableTableIntelligenceCheckbox && extractFormulasCheckbox && extractFormulasCheckbox.checked;
@@ -460,7 +448,7 @@ async function processBibleData(parsedDocument, originalFileName) {
             sourceFileName: originalFileName,
             convertedAt: new Date().toISOString(),
             copyrightInfo: "Source text preserved as provided.",
-            converterVersion: "Phase 6 - Table & Canon Engine v1.0"
+            converterVersion: "Phase 7 - Security & Canon Engine v1.0"
         },
         canon: bibleStructure
     };
@@ -472,7 +460,7 @@ async function processBibleData(parsedDocument, originalFileName) {
         result.validationSummary = validationReport.summary;
 
         if (reportString) {
-            downloadReportBtn.style.display = 'inline-block';
+            downloadReportBtn.style.display = 'inline-flex';
         }
     }
 
@@ -655,7 +643,7 @@ function updateProgress(percent, text) {
     progressText.innerText = text;
 }
 
-// Download Handlers
+// Download & Clipboard Handlers
 downloadBtn.addEventListener('click', () => {
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -674,3 +662,14 @@ downloadReportBtn.addEventListener('click', () => {
     a.download = 'bible_validation_report.txt';
     a.click();
 });
+
+if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+        if (!jsonString) return;
+        navigator.clipboard.writeText(jsonString).then(() => {
+            const span = copyBtn.querySelector('span');
+            span.textContent = 'Copied!';
+            setTimeout(() => { span.textContent = 'Copy JSON'; }, 2000);
+        });
+    });
+}
