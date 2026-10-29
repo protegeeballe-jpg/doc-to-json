@@ -7,6 +7,7 @@ const fileInfo = document.getElementById('fileInfo');
 const progressContainer = document.getElementById('progressContainer');
 const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
+const preserveStringsCheckbox = document.getElementById('preserveStrings');
 let jsonString = '';
 
 // Configure worker for PDF.js using the global version
@@ -34,7 +35,7 @@ dropZone.addEventListener('drop', (e) => {
 
 fileInput.addEventListener('change', handleFile);
 
-// Universal Main File Router (Phase 2)
+// Universal Main File Router with Phase 3 Configurations
 async function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -86,7 +87,7 @@ async function handleFile(e) {
 }
 
 // -------------------------------------------------------------
-// Parser 1: PDF Parser (Preserving your advanced column sorting)
+// Parser 1: PDF Parser (Layout-aware coordinate sorting)
 // -------------------------------------------------------------
 async function parsePDF(file) {
     const arrayBuffer = await file.arrayBuffer();
@@ -108,7 +109,6 @@ async function parsePDF(file) {
         const textContent = await page.getTextContent();
         const viewport = page.getViewport({ scale: 1.0 });
 
-        // Extract items with coordinate values
         const textItems = textContent.items.map(item => ({
             text: item.str,
             x: item.transform[4],
@@ -118,7 +118,6 @@ async function parsePDF(file) {
             fontName: item.fontName
         }));
 
-        // Layout-aware column sorting
         const sortedBlocks = sortTextByColumnsAndReadingOrder(textItems, viewport.width);
         
         structuredPages.push({
@@ -137,7 +136,6 @@ async function parsePDF(file) {
     };
 }
 
-// Multi-column sorting algorithm to prevent text interleaving
 function sortTextByColumnsAndReadingOrder(items, pageWidth) {
     if (items.length === 0) return { headers: [], columns: [] };
 
@@ -206,17 +204,36 @@ async function parseJSONFile(file) {
 }
 
 // -------------------------------------------------------------
-// Parser 4: Spreadsheet Parser (.csv, .xlsx, .xls)
+// Parser 4: Spreadsheet & CSV Parser (.csv, .xlsx, .xls)
 // -------------------------------------------------------------
 async function parseSpreadsheet(file, ext) {
     updateProgress(50, `Parsing ${ext.toUpperCase()} spreadsheet...`);
     const arrayBuffer = await file.arrayBuffer();
     const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    
+    // Check Phase 3 configuration toggle for string preservation
+    const preserveStrings = preserveStringsCheckbox ? preserveStringsCheckbox.checked : true;
+    const rawOption = !preserveStrings; // if preserveStrings is true, raw is false (returns formatted strings)
 
+    // Friend's Suggestion 1: Give CSV its own dedicated rows structure
+    if (ext === 'csv') {
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: rawOption });
+        
+        return {
+            fileName: file.name,
+            fileType: 'csv',
+            totalRows: rows.length,
+            rows: rows
+        };
+    }
+
+    // For multi-sheet Excel workbooks (.xlsx, .xls)
     const sheetsData = {};
     workbook.SheetNames.forEach(sheetName => {
         const worksheet = workbook.Sheets[sheetName];
-        sheetsData[sheetName] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+        sheetsData[sheetName] = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: rawOption });
     });
 
     return {
