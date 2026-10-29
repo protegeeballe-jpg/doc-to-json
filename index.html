@@ -18,7 +18,15 @@
 <body class="bg-gray-50 text-gray-800">
 
     <h2 class="text-2xl font-bold mb-2">Universal Document to JSON Converter</h2>
-    <p class="text-gray-600 mb-6">Convert PDFs, Text, JSON, CSV, and Excel files into clean, structured JSON.</p>
+    <p class="text-gray-600 mb-4">Convert PDFs, Text, JSON, CSV, and Excel files into clean, structured JSON.</p>
+
+    <!-- Phase 3 Configuration Options Toolbar -->
+    <div class="flex justify-center items-center gap-2 mb-4 text-sm text-gray-700 bg-white p-3 rounded-lg shadow-sm border border-gray-200">
+        <label class="flex items-center cursor-pointer select-none">
+            <input type="checkbox" id="preserveStrings" class="mr-2 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500" checked>
+            <span class="font-medium">Preserve values as strings (prevents stripping leading zeros)</span>
+        </label>
+    </div>
 
     <!-- Enhanced Drag & Drop Zone -->
     <div id="dropZone" class="border-2 border-dashed border-blue-400 p-8 bg-white text-center rounded-lg cursor-pointer hover:border-blue-600 hover:bg-blue-50 transition shadow-sm mb-4">
@@ -45,7 +53,7 @@
 
     <textarea id="output" placeholder="Structured JSON output will appear here..."></textarea>
 
-    <!-- Links to your separate script.js file -->
+    <!-- Links to script.js -->
     <script src="script.js"></script>
 </body>
 </html>
