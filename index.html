@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to JSON Converter</title>
+    <!-- Include PDF.js library from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background: #f4f4f9; }
+        .drop-zone { border: 2px dashed #007bff; padding: 40px; background: #fff; cursor: pointer; border-radius: 8px; margin-bottom: 20px; }
+        .drop-zone:hover { background: #f1f8ff; }
+        textarea { width: 100%; height: 200px; margin-top: 15px; padding: 10px; font-family: monospace; border-radius: 5px; border: 1px solid #ccc; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+
+    <h2>PDF to JSON Browser Converter</h2>
+    <p>Upload a PDF file to extract its text into structured JSON instantly.</p>
+
+    <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" accept=".pdf" style="display: none;">
+        <p>Click here or drag & drop a PDF file</p>
+    </div>
+
+    <button id="downloadBtn" style="display:none;">Download JSON File</button>
+    <textarea id="output" placeholder="JSON output will appear here..."></textarea>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const outputArea = document.getElementById('output');
+        const downloadBtn = document.getElementById('downloadBtn');
+        let jsonString = '';
+
+        dropZone.click = () => fileInput.click();
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFile);
+
+        async function handleFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.readAsArrayBuffer(file);
+            reader.onload = async function() {
+                const typedarray = new Uint8Array(this.result);
+                
+                // Load PDF using PDF.js
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+                const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                
+                let fullText = {};
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    fullText[`page_${i}`] = pageText;
+                }
+
+                const resultObject = {
+                    fileName: file.name,
+                    totalPages: pdf.numPages,
+                    content: fullText
+                };
+
+                jsonString = JSON.stringify(resultObject, null, 2);
+                outputArea.value = jsonString;
+                downloadBtn.style.display = 'inline-block';
+            };
+        }
+
+        downloadBtn.addEventListener('click', () => {
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'converted.json';
+            a.click();
+        });
+    </script>
+</body>
+</html>
