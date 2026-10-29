@@ -6,28 +6,41 @@
     <title>PDF to JSON Converter</title>
     <!-- Include PDF.js library from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <!-- Include Tailwind CSS for modern UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; text-align: center; background: #f4f4f9; }
-        .drop-zone { border: 2px dashed #007bff; padding: 40px; background: #fff; cursor: pointer; border-radius: 8px; margin-bottom: 20px; }
-        .drop-zone:hover { background: #f1f8ff; }
+        body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; text-align: center; background: #f4f4f9; }
         textarea { width: 100%; height: 250px; margin-top: 15px; padding: 10px; font-family: monospace; border-radius: 5px; border: 1px solid #ccc; }
-        button { background: #007bff; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        #status { font-weight: bold; color: #555; margin: 10px 0; }
     </style>
 </head>
-<body>
+<body class="bg-gray-50 text-gray-800">
 
-    <h2>PDF to JSON Converter</h2>
-    <p>Upload a PDF to extract structured text cleanly ordered by layout coordinates.</p>
+    <h2 class="text-2xl font-bold mb-2">PDF to JSON Converter</h2>
+    <p class="text-gray-600 mb-6">Upload a PDF to extract structured text cleanly ordered by layout coordinates.</p>
 
-    <div class="drop-zone" id="dropZone">
-        <input type="file" id="fileInput" accept=".pdf" style="display: none;">
-        <p>Click here or drag & drop your PDF file</p>
+    <!-- Enhanced Drag & Drop Zone -->
+    <div id="dropZone" class="border-2 border-dashed border-blue-400 p-8 bg-white text-center rounded-lg cursor-pointer hover:border-blue-600 hover:bg-blue-50 transition shadow-sm mb-4">
+        <input type="file" id="fileInput" accept=".pdf" class="hidden">
+        <p class="text-gray-600 font-medium">Drag and drop your PDF here, or <span class="text-blue-600 font-semibold underline">browse</span></p>
     </div>
 
-    <div id="status"></div>
-    <button id="downloadBtn" style="display:none;">Download Structured JSON</button>
+    <!-- File Information Display -->
+    <div id="fileInfo" class="text-sm text-gray-700 font-medium mb-3"></div>
+
+    <!-- Live Progress Bar Container -->
+    <div id="progressContainer" class="mb-4 hidden">
+        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden shadow-inner">
+            <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <span id="progressText" class="text-xs text-gray-500 mt-1 block">Processing...</span>
+    </div>
+
+    <div id="status" class="font-bold text-gray-600 my-2"></div>
+    
+    <div>
+        <button id="downloadBtn" class="bg-blue-600 text-white font-semibold border-none px-5 py-2.5 text-base rounded-md cursor-pointer hover:bg-blue-700 transition shadow-sm" style="display:none;">Download Structured JSON</button>
+    </div>
+
     <textarea id="output" placeholder="Structured JSON output will appear here..."></textarea>
 
     <script>
@@ -36,28 +49,72 @@
         const outputArea = document.getElementById('output');
         const downloadBtn = document.getElementById('downloadBtn');
         const statusDiv = document.getElementById('status');
+        const fileInfo = document.getElementById('fileInfo');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
         let jsonString = '';
 
+        // Drag and drop event handlers
         dropZone.addEventListener('click', () => fileInput.click());
+        
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('border-blue-600', 'bg-blue-50');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('border-blue-600', 'bg-blue-50');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-blue-600', 'bg-blue-50');
+            if (e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files;
+                handleFile({ target: fileInput });
+            }
+        });
+
         fileInput.addEventListener('change', handleFile);
 
         async function handleFile(e) {
             const file = e.target.files[0];
             if (!file) return;
 
-            statusDiv.textContent = "Processing and sorting PDF layout...";
+            // Validate PDF file format
+            if (file.type !== 'application/pdf') {
+                alert('Invalid file type. Please upload a valid PDF document.');
+                return;
+            }
+
+            // Display file metadata (Name and Size)
+            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+            fileInfo.textContent = `Selected File: ${file.name} (${fileSizeMB} MB)`;
+            
+            // Show progress bar
+            progressContainer.classList.remove('hidden');
+            updateProgress(10, "Reading file buffer...");
+
             const reader = new FileReader();
             reader.readAsArrayBuffer(file);
+            
             reader.onload = async function() {
                 try {
+                    updateProgress(30, "Initializing PDF layout engine...");
                     const typedarray = new Uint8Array(this.result);
                     
                     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-                    const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                    const pdf = await pdfjsLib.getDocument({ data: typedarray }).promise;
                     
                     let structuredPages = [];
+                    const totalPages = pdf.numPages;
 
-                    for (let i = 1; i <= pdf.numPages; i++) {
+                    for (let i = 1; i <= totalPages; i++) {
+                        // Dynamically scale progress bar based on page completion
+                        const percent = 30 + Math.floor((i / totalPages) * 60);
+                        updateProgress(percent, `Processing page ${i} of ${totalPages}...`);
+
                         const page = await pdf.getPage(i);
                         const textContent = await page.getTextContent();
                         
@@ -68,7 +125,6 @@
                             const xA = a.transform[4];
                             const xB = b.transform[4];
                             
-                            // If Y coordinates are close (same line, within ~5 pixels), sort by X
                             if (Math.abs(yA - yB) > 5) {
                                 return yB - yA; // PDF Y-coordinates start from bottom, so higher Y is top
                             }
@@ -110,12 +166,24 @@
                     jsonString = JSON.stringify(resultObject, null, 2);
                     outputArea.value = jsonString;
                     downloadBtn.style.display = 'inline-block';
+                    
+                    updateProgress(100, "Conversion complete!");
                     statusDiv.textContent = "Conversion complete and accurately sorted!";
+                    
+                    // Hide progress bar shortly after completion
+                    setTimeout(() => progressContainer.classList.add('hidden'), 2500);
+
                 } catch (err) {
-                    statusDiv.textContent = "Error processing PDF.";
+                    progressContainer.classList.add('hidden');
+                    statusDiv.textContent = "Error processing PDF. The file may be password-protected or corrupted.";
                     console.error(err);
                 }
             };
+        }
+
+        function updateProgress(percent, text) {
+            progressBar.style.width = `${percent}%`;
+            progressText.textContent = text;
         }
 
         downloadBtn.addEventListener('click', () => {
