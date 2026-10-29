@@ -18,20 +18,28 @@ const bibleLanguageSelect = document.getElementById('bibleLanguage');
 const stripFootnotesCheckbox = document.getElementById('stripFootnotes');
 const runValidationCheckbox = document.getElementById('runValidation');
 
+// Phase 5 OCR UI Elements
+const enableOcrCheckbox = document.getElementById('enableOcr');
+const ocrOptionsDiv = document.getElementById('ocrOptions');
+const ocrLanguageSelect = document.getElementById('ocrLanguage');
+const forceOcrAllCheckbox = document.getElementById('forceOcrAll');
+
 let jsonString = '';
 let reportString = '';
 
 // Configure worker for PDF.js using the global version
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-// Toggle Bible Mode Controls Display
+// Toggle UI controls
 if (enableBibleModeCheckbox) {
     enableBibleModeCheckbox.addEventListener('change', () => {
-        if (enableBibleModeCheckbox.checked) {
-            bibleOptionsDiv.classList.remove('hidden');
-        } else {
-            bibleOptionsDiv.classList.add('hidden');
-        }
+        bibleOptionsDiv.classList.toggle('hidden', !enableBibleModeCheckbox.checked);
+    });
+}
+
+if (enableOcrCheckbox) {
+    enableOcrCheckbox.addEventListener('change', () => {
+        ocrOptionsDiv.classList.toggle('hidden', !enableOcrCheckbox.checked);
     });
 }
 
@@ -107,45 +115,37 @@ async function handleFile(e) {
             : `Successfully parsed .${fileExt} document!`;
 
     } catch (error) {
-        if (error.name === 'PasswordException') {
-            const password = prompt('This PDF is password-protected. Please enter the password:');
-            if (password) {
-                // Handle password logic if needed
-            }
-        } else {
-            console.error('Extraction Error:', error);
-            statusDiv.textContent = `Error processing file: ${error.message}`;
-            alert(`Failed to parse file: ${error.message}`);
-        }
+        console.error('Extraction Error:', error);
+        statusDiv.textContent = `Error processing file: ${error.message}`;
+        alert(`Failed to parse file: ${error.message}`);
     } finally {
         setTimeout(() => progressContainer.classList.add('hidden'), 2500);
     }
 }
 
 // -------------------------------------------------------------
-// Parser 1: Standard PDF Parser (Layout-aware coordinate sorting)
+// Parser 1: PDF Parser with Phase 5 OCR Fallback
 // -------------------------------------------------------------
 async function parsePDF(file) {
     const arrayBuffer = await file.arrayBuffer();
-    
-    const loadingTask = pdfjsLib.getDocument({
-        data: arrayBuffer,
-        password: '' 
-    });
-
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password: '' });
     const pdfDoc = await loadingTask.promise;
     const numPages = pdfDoc.numPages;
     const structuredPages = [];
 
+    const isOcrEnabled = enableOcrCheckbox && enableOcrCheckbox.checked;
+    const ocrLang = ocrLanguageSelect ? ocrLanguageSelect.value : 'spa';
+    const forceOcr = forceOcrAllCheckbox ? forceOcrAllCheckbox.checked : false;
+
     for (let i = 1; i <= numPages; i++) {
-        const percent = 10 + Math.floor((i / numPages) * 70);
-        updateProgress(percent, `Extracting PDF text page ${i} of ${numPages}...`);
+        const percent = 10 + Math.floor((i / numPages) * 60);
+        updateProgress(percent, `Processing PDF page ${i} of ${numPages}...`);
         
         const page = await pdfDoc.getPage(i);
         const textContent = await page.getTextContent();
-        const viewport = page.getViewport({ scale: 1.0 });
+        const viewport = page.getViewport({ scale: 1.5 }); // Higher scale for better OCR quality
 
-        const textItems = textContent.items.map(item => ({
+        let textItems = textContent.items.map(item => ({
             text: item.str,
             x: item.transform[4],
             y: item.transform[5],
@@ -154,12 +154,28 @@ async function parsePDF(file) {
             fontName: item.fontName
         }));
 
+        let pageSourceType = "native_text";
+        let ocrConfidenceScore = null;
+
+        // Phase 5: Check if page has no usable text or if OCR is forced
+        const totalCharCount = textItems.reduce((acc, curr) => acc + curr.text.trim().length, 0);
+        if (isOcrEnabled && (forceOcr || totalCharCount < 15)) {
+            updateProgress(percent, `Running OCR on scanned page ${i} of ${numPages}...`);
+            pageSourceType = "ocr_fallback";
+            
+            const ocrResult = await performOcrOnPage(page, viewport, ocrLang);
+            textItems = ocrResult.items;
+            ocrConfidenceScore = ocrResult.confidence;
+        }
+
         const sortedBlocks = sortTextByColumnsAndReadingOrder(textItems, viewport.width);
         
         structuredPages.push({
             pageNumber: i,
             width: viewport.width,
             height: viewport.height,
+            sourceType: pageSourceType,
+            ocrConfidence: ocrConfidenceScore,
             layout: sortedBlocks
         });
     }
@@ -170,6 +186,40 @@ async function parsePDF(file) {
         totalPages: numPages,
         pages: structuredPages
     };
+}
+
+async function performOcrOnPage(page, viewport, lang) {
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const context = canvas.getContext('2d');
+
+    await page.render({ canvasContext: context, viewport: viewport }).promise;
+    const imageDataUrl = canvas.toDataURL('image/png');
+
+    try {
+        const worker = await Tesseract.createWorker(lang);
+        const ret = await worker.recognize(imageDataUrl);
+        await worker.terminate();
+
+        const words = ret.data.words || [];
+        const items = words.map(w => ({
+            text: w.text,
+            x: w.bbox.x0,
+            y: viewport.height - w.bbox.y1, // Flip coordinate system for consistency
+            width: w.bbox.x1 - w.bbox.x0,
+            height: w.bbox.y1 - w.bbox.y0,
+            fontName: 'OCR-Font'
+        }));
+
+        return {
+            items: items,
+            confidence: ret.data.confidence || 0
+        };
+    } catch (err) {
+        console.error("OCR execution failed:", err);
+        return { items: [], confidence: 0 };
+    }
 }
 
 function sortTextByColumnsAndReadingOrder(items, pageWidth) {
@@ -278,11 +328,11 @@ async function parseSpreadsheet(file, ext) {
 }
 
 // =============================================================
-// PHASE 4: BIBLE-SPECIFIC CONVERSION & VALIDATION ENGINE
+// PHASE 4 & 5: BIBLE CONVERSION & VALIDATION ENGINE
 // =============================================================
 
 const KNOWN_BIBLE_BOOKS = [
-    // --- SPANISH & ENGLISH ---
+    // Spanish & English
     "Génesis", "Genesis", "Éxodo", "Exodo", "Exodus", "Levítico", "Levitico", "Leviticus",
     "Números", "Numeros", "Numbers", "Deuteronomio", "Deuteronomy", "Josué", "Josue", "Joshua",
     "Jueces", "Judges", "Rut", "Ruth", "1 Samuel", "2 Samuel", "1 Reyes", "1 Kings", "2 Reyes", "2 Kings",
@@ -300,39 +350,27 @@ const KNOWN_BIBLE_BOOKS = [
     "1 Timoteo", "1 Timothy", "2 Timoteo", "2 Timothy", "Tito", "Titus", "Filemón", "Filemon", "Philemon",
     "Hebreos", "Hebrews", "Santiago", "James", "1 Pedro", "1 Peter", "2 Pedro", "2 Peter",
     "1 Juan", "1 John", "2 Juan", "2 John", "3 Juan", "3 John", "Judas", "Jude", "Apocalipsis", "Revelation",
-
-    // --- FRENCH (FRANÇAIS) ---
+    // French
     "Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome", "Josué", "Juges", "Ruth",
-    "1 Samuel", "2 Samuel", "1 Rois", "2 Rois", "1 Chroniques", "2 Chroniques", "Esdras", "Néhémie",
-    "Esther", "Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques", "Ésaïe",
-    "Jérémie", "Lamentations", "Ézéchiel", "Daniel", "Osée", "Joël", "Amos", "Abdias", "Jonas",
-    "Michée", "Nahum", "Habacuc", "Sophonie", "Aggée", "Zacharie", "Malachie",
-    "Matthieu", "Marc", "Luc", "Jean", "Actes", "Romains", "1 Corinthiens", "2 Corinthiens",
-    "Galates", "Éphésiens", "Philippiens", "Colossiens", "1 Thessaloniciens", "2 Thessaloniciens",
-    "1 Timothée", "2 Timothée", "Tite", "Philémon", "Hébreux", "Jacques", "1 Pierre", "2 Pierre",
-    "1 Jean", "2 Jean", "3 Jean", "Judas", "Apocalypse",
-
-    // --- TAGALOG ---
-    "Genesis", "Exodo", "Levitico", "Mga Bilang", "Deuteronomio", "Josue", "Mga Hukom", "Ruth",
-    "1 Samuel", "2 Samuel", "1 Mga Hari", "2 Mga Hari", "1 Cronica", "2 Cronica", "Esdras", "Nehemias",
-    "Ester", "Job", "Mga Awit", "Kawikaan", "Eclesiastes", "Awit ni Solomon", "Isaias",
-    "Jeremias", "Mga Panaghoy", "Ezekiel", "Daniel", "Oseas", "Joel", "Amos", "Obadias", "Jonas",
-    "Mikas", "Nahum", "Habacuc", "Zefanias", "Hageo", "Zacarias", "Malakias",
-    "Mateo", "Marcos", "Lucas", "Juan", "Mga Gawa", "Roma", "1 Corinto", "2 Corinto",
-    "Galacia", "Efeso", "Filipos", "Colosas", "1 Tesalonica", "2 Tesalonica",
-    "1 Timoteo", "2 Timoteo", "Tito", "Filemon", "Hebreo", "Santiago", "1 Pedro", "2 Pedro",
-    "1 Juan", "2 Juan", "3 Juan", "Judas", "Apocalipsis",
-
-    // --- EWE (ƐWƐGBE) ---
-    "Genesis", "Exodos", "Leviticus", "Numeros", "Deuteronomio", "Yoshua", "Ʋɔdrɔlawo", "Rut",
-    "Samuel 1", "Samuel 2", "Fiawo 1", "Fiawo 2", "Kronika 1", "Kronika 2", "Esdra", "Nehemia",
-    "Ester", "Job", "Psalmo", "Lododowo", "Nyagblɔla", "Hadzidza Fe Hadzidza", "Yesaya",
-    "Yeremiya", "Avalagbe", "Ezekiel", "Daniel", "Hosea", "Joel", "Amos", "Obadia", "Jona",
-    "Mika", "Nahum", "Habakuk", "Sefania", "Hagai", "Zekaria", "Malaki",
-    "Mateo", "Marko", "Luka", "Yohanes", "Dɔwɔwɔwo", "Romalɔwo", "Korintotɔwo 1", "Korintotɔwo 2",
-    "Galatiatɔwo", "Efesotɔwo", "Filipitɔwo", "Kolosetɔwo", "Tesalonikatɔwo 1", "Tesalonikatɔwo 2",
-    "Timoteo 1", "Timoteo 2", "Tito", "Filemon", "Hebritɔwo", "Yakobo", "Petro 1", "Petro 2",
-    "Yohanes 1", "Yohanes 2", "Yohanes 3", "Yuda", "Nyaɖeɖefia"
+    "1 Rois", "2 Rois", "1 Chroniques", "2 Chroniques", "Néhémie", "Psaumes", "Proverbes",
+    "Ecclésiaste", "Cantique des Cantiques", "Ésaïe", "Jérémie", "Ézéchiel", "Osée", "Michée",
+    "Sophonie", "Aggée", "Zacharie", "Malachie", "Matthieu", "Marc", "Luc", "Jean", "Actes",
+    "Romains", "1 Corinthiens", "2 Corinthiens", "Galates", "Éphésiens", "Philippiens", "Colossiens",
+    "1 Thessaloniciens", "2 Thessaloniciens", "1 Timothée", "2 Timothée", "Hébreux", "Jacques",
+    "1 Pierre", "2 Pierre", "Apocalypse",
+    // Tagalog
+    "Mga Bilang", "Mga Hukom", "1 Mga Hari", "2 Mga Hari", "1 Cronica", "2 Cronica", "Nehemias",
+    "Mga Awit", "Kawikaan", "Awit ni Solomon", "Mga Panaghoy", "Zefanias", "Malakias", "Mga Gawa",
+    "Roma", "1 Corinto", "2 Corinto", "Galacia", "Efeso", "Filipos", "Colosas", "1 Tesalonica",
+    "2 Tesalonica", "Hebreo", "Apocalipsis",
+    // Ewe
+    "Exodos", "Yoshua", "Ʋɔdrɔlawo", "Fiawo 1", "Fiawo 2", "Kronika 1", "Kronika 2", "Nehemia",
+    "Psalmo", "Lododowo", "Nyagblɔla", "Hadzidza Fe Hadzidza", "Yesaya", "Yeremiya", "Avalagbe",
+    "Hosea", "Obadia", "Mika", "Habakuk", "Sefania", "Hagai", "Zekaria", "Malaki", "Marko",
+    "Luka", "Yohanes", "Dɔwɔwɔwo", "Romalɔwo", "Korintotɔwo 1", "Korintotɔwo 2", "Galatiatɔwo",
+    "Efesotɔwo", "Filipitɔwo", "Kolosetɔwo", "Tesalonikatɔwo 1", "Tesalonikatɔwo 2", "Timoteo 1",
+    "Timoteo 2", "Hebritɔwo", "Yakobo", "Petro 1", "Petro 2", "Yohanes 1", "Yohanes 2",
+    "Yohanes 3", "Yuda", "Nyaɖeɖefia"
 ];
 
 async function processBibleData(parsedDocument, originalFileName) {
@@ -354,14 +392,14 @@ async function processBibleData(parsedDocument, originalFileName) {
             sourceFileName: originalFileName,
             convertedAt: new Date().toISOString(),
             copyrightInfo: "Source text preserved as provided.",
-            converterVersion: "Phase 4 - Engine v1.0"
+            converterVersion: "Phase 5 - OCR & Canon Engine v1.0"
         },
         canon: bibleStructure
     };
 
     if (runValidation) {
         updateProgress(90, 'Running canonical validation audit...');
-        const validationReport = validateBibleStructure(bibleStructure);
+        const validationReport = validateBibleStructure(parsedDocument, bibleStructure);
         reportString = validationReport.reportText;
         result.validationSummary = validationReport.summary;
 
@@ -375,16 +413,12 @@ async function processBibleData(parsedDocument, originalFileName) {
 
 function extractSequentialLines(parsedDoc) {
     const lines = [];
-    if (parsedDoc.lines) {
-        return parsedDoc.lines;
-    }
+    if (parsedDoc.lines) return parsedDoc.lines;
     if (parsedDoc.pages) {
         parsedDoc.pages.forEach(page => {
             if (page.layout && page.layout.columns) {
                 page.layout.columns.forEach(col => {
-                    if (Array.isArray(col.text)) {
-                        lines.push(...col.text);
-                    }
+                    if (Array.isArray(col.text)) lines.push(...col.text);
                 });
             }
         });
@@ -407,12 +441,8 @@ function parseBibleTextStream(lines, stripFootnotes) {
         if (!trimmed) return;
 
         if (trimmed === "SANTA BIBLIA" || trimmed === "Antiguo Testamento" || trimmed === "Nuevo Testamento") return;
+        if (stripFootnotes && (footnoteMarkers.test(trimmed) || trimmed === "GEE" || trimmed === "HEB" || trimmed === "TJS")) return;
 
-        if (stripFootnotes && (footnoteMarkers.test(trimmed) || trimmed === "GEE" || trimmed === "HEB" || trimmed === "TJS")) {
-            return;
-        }
-
-        // 1. Detect Book Name
         const matchedBook = KNOWN_BIBLE_BOOKS.find(b => b.toLowerCase() === trimmed.toLowerCase());
         if (matchedBook) {
             if (currentBook && currentBook.name !== matchedBook) {
@@ -432,7 +462,6 @@ function parseBibleTextStream(lines, stripFootnotes) {
             return;
         }
 
-        // 2. Detect Chapter Heading
         const chapMatch = trimmed.match(chapterRegex);
         if (chapMatch) {
             if (currentVerse && currentChapter) {
@@ -442,59 +471,41 @@ function parseBibleTextStream(lines, stripFootnotes) {
             if (currentChapter && currentBook) {
                 currentBook.chapters.push(currentChapter);
             }
+            if (!currentBook) currentBook = { name: "Unknown Book", chapters: [] };
 
-            if (!currentBook) {
-                currentBook = { name: "Unknown Book", chapters: [] };
-            }
-
-            currentChapter = {
-                chapterNumber: parseInt(chapMatch[1], 10),
-                verses: []
-            };
+            currentChapter = { chapterNumber: parseInt(chapMatch[1], 10), verses: [] };
             return;
         }
 
-        // 3. Detect Verse Numbers & Verse Text
         const verseMatch = trimmed.match(verseNumRegex);
         if (verseMatch && currentChapter) {
-            if (currentVerse) {
-                currentChapter.verses.push(currentVerse);
-            }
-            currentVerse = {
-                verseNumber: parseInt(verseMatch[1], 10),
-                text: verseMatch[2].trim()
-            };
+            if (currentVerse) currentChapter.verses.push(currentVerse);
+            currentVerse = { verseNumber: parseInt(verseMatch[1], 10), text: verseMatch[2].trim() };
             return;
         }
 
-        // 4. Multi-line & Multi-page Verse Text Accumulator
         if (currentVerse) {
             currentVerse.text += " " + trimmed;
         }
     });
 
-    if (currentVerse && currentChapter) {
-        currentChapter.verses.push(currentVerse);
-    }
-    if (currentChapter && currentBook) {
-        currentBook.chapters.push(currentChapter);
-    }
-    if (currentBook && !books.includes(currentBook)) {
-        books.push(currentBook);
-    }
+    if (currentVerse && currentChapter) currentChapter.verses.push(currentVerse);
+    if (currentChapter && currentBook) currentBook.chapters.push(currentChapter);
+    if (currentBook && !books.includes(currentBook)) books.push(currentBook);
 
     return books;
 }
 
 // -------------------------------------------------------------
-// Validation & Quality Assurance Module
+// Validation & Quality Assurance Module (Including OCR Confidence Check)
 // -------------------------------------------------------------
-function validateBibleStructure(bibleStructure) {
+function validateBibleStructure(parsedDoc, bibleStructure) {
     let totalBooks = bibleStructure.length;
     let totalChapters = 0;
     let totalVerses = 0;
     let missingVersesCount = 0;
     let emptyVersesCount = 0;
+    let lowConfidencePages = 0;
 
     const reportLines = [];
     reportLines.push("==================================================");
@@ -502,6 +513,19 @@ function validateBibleStructure(bibleStructure) {
     reportLines.push("==================================================");
     reportLines.push(`Timestamp: ${new Date().toLocaleString()}`);
     reportLines.push(`Total Books Identified: ${totalBooks}\n`);
+
+    if (parsedDoc.pages) {
+        parsedDoc.pages.forEach(p => {
+            if (p.sourceType === 'ocr_fallback') {
+                reportLines.push(`[OCR INFO] Page ${p.pageNumber}: Processed via OCR (Confidence: ${p.ocrConfidence ? p.ocrConfidence.toFixed(1) : 'N/A'}%)`);
+                if (p.ocrConfidence !== null && p.ocrConfidence < 75) {
+                    reportLines.push(`  [WARNING] Page ${p.pageNumber}: Low OCR confidence score (<75%). Manual inspection recommended.`);
+                    lowConfidencePages++;
+                }
+            }
+        });
+        reportLines.push("");
+    }
 
     bibleStructure.forEach(book => {
         totalChapters += book.chapters.length;
@@ -533,9 +557,10 @@ function validateBibleStructure(bibleStructure) {
     reportLines.push(`Total Verses Extracted: ${totalVerses}`);
     reportLines.push(`Sequence/Missing Flags: ${missingVersesCount}`);
     reportLines.push(`Empty/Short Text Flags: ${emptyVersesCount}`);
+    reportLines.push(`Low-Confidence OCR Pages: ${lowConfidencePages}`);
     reportLines.push("--------------------------------------------------");
 
-    const isPassed = missingVersesCount === 0 && emptyVersesCount === 0 && totalBooks > 0;
+    const isPassed = missingVersesCount === 0 && emptyVersesCount === 0 && totalBooks > 0 && lowConfidencePages === 0;
     reportLines.push(`CANON VALIDATION STATUS: ${isPassed ? "PASSED" : "NEEDS REVIEW"}`);
 
     return {
@@ -545,6 +570,7 @@ function validateBibleStructure(bibleStructure) {
             totalVerses,
             sequenceErrors: missingVersesCount,
             shortTextErrors: emptyVersesCount,
+            lowConfidenceOcrPages: lowConfidencePages,
             passedValidation: isPassed
         },
         reportText: reportLines.join("\n")
