@@ -13,7 +13,7 @@
     <!-- Include Tailwind CSS for modern UI styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 750px; margin: 40px auto; padding: 20px; text-align: center; background: #f4f4f9; }
+        body { font-family: Arial, sans-serif; max-width: 780px; margin: 40px auto; padding: 20px; text-align: center; background: #f4f4f9; }
         textarea { width: 100%; height: 250px; margin-top: 15px; padding: 10px; font-family: monospace; border-radius: 5px; border: 1px solid #ccc; }
     </style>
 </head>
@@ -40,7 +40,6 @@
             <span class="text-xs bg-blue-200 text-blue-800 px-2 py-0.5 rounded font-medium">My Heart Treasury</span>
         </div>
 
-        <!-- Bible Metadata Controls (Revealed when Bible Mode is checked) -->
         <div id="bibleOptions" class="hidden grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-blue-200">
             <div>
                 <label class="block text-xs font-medium text-gray-600 mb-1" for="bibleTranslation">Translation / Edition Title</label>
@@ -72,7 +71,7 @@
     </div>
 
     <!-- Phase 5: OCR for Scanned Documents Options Card -->
-    <div class="mb-4 text-left text-sm text-gray-700 bg-amber-50 border border-amber-200 p-4 rounded-lg shadow-sm">
+    <div class="mb-3 text-left text-sm text-gray-700 bg-amber-50 border border-amber-200 p-4 rounded-lg shadow-sm">
         <div class="flex items-center justify-between mb-2">
             <label class="flex items-center cursor-pointer select-none font-semibold text-amber-900">
                 <input type="checkbox" id="enableOcr" class="mr-2 h-4 w-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500">
@@ -96,6 +95,37 @@
                 <label class="flex items-center cursor-pointer text-xs select-none">
                     <input type="checkbox" id="forceOcrAll" class="mr-1.5 h-3.5 w-3.5 text-amber-600 rounded">
                     <span>Force OCR on all pages (ignore existing text layer)</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Phase 6: Table & Spreadsheet Intelligence Options Card -->
+    <div class="mb-4 text-left text-sm text-gray-700 bg-emerald-50 border border-emerald-200 p-4 rounded-lg shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+            <label class="flex items-center cursor-pointer select-none font-semibold text-emerald-900">
+                <input type="checkbox" id="enableTableIntelligence" class="mr-2 h-4 w-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500" checked>
+                <span>Enable Advanced Table & Spreadsheet Intelligence (Phase 6)</span>
+            </label>
+            <span class="text-xs bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded font-medium">Sheet & PDF Grids</span>
+        </div>
+
+        <div id="tableIntelligenceOptions" class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-emerald-200">
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1" for="spreadsheetStructure">Spreadsheet Output Format</label>
+                <select id="spreadsheetStructure" class="w-full text-xs p-2 rounded border border-gray-300 focus:ring-1 focus:ring-emerald-500">
+                    <option value="objects">Array of Objects (Key-Value by Headers)</option>
+                    <option value="arrays">Array of Arrays (Matrix / Row-Column Grid)</option>
+                </select>
+            </div>
+            <div class="flex flex-col justify-center gap-1.5 pt-1">
+                <label class="flex items-center cursor-pointer text-xs select-none">
+                    <input type="checkbox" id="extractFormulas" class="mr-1.5 h-3.5 w-3.5 text-emerald-600 rounded" checked>
+                    <span>Distinguish Formulas from Calculated Values</span>
+                </label>
+                <label class="flex items-center cursor-pointer text-xs select-none">
+                    <input type="checkbox" id="detectPdfTables" class="mr-1.5 h-3.5 w-3.5 text-emerald-600 rounded" checked>
+                    <span>Detect & Structure Tables in PDFs</span>
                 </label>
             </div>
         </div>
