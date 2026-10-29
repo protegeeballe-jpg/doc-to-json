@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF to JSON Converter</title>
+    <title>Universal Document to JSON Converter</title>
     <!-- Include PDF.js library from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <!-- Include SheetJS (xlsx/csv) library from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <!-- Include Tailwind CSS for modern UI styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -15,13 +17,13 @@
 </head>
 <body class="bg-gray-50 text-gray-800">
 
-    <h2 class="text-2xl font-bold mb-2">PDF to JSON Converter</h2>
-    <p class="text-gray-600 mb-6">Upload a PDF to extract structured text cleanly ordered by layout coordinates.</p>
+    <h2 class="text-2xl font-bold mb-2">Universal Document to JSON Converter</h2>
+    <p class="text-gray-600 mb-6">Convert PDFs, Text, JSON, CSV, and Excel files into clean, structured JSON.</p>
 
     <!-- Enhanced Drag & Drop Zone -->
     <div id="dropZone" class="border-2 border-dashed border-blue-400 p-8 bg-white text-center rounded-lg cursor-pointer hover:border-blue-600 hover:bg-blue-50 transition shadow-sm mb-4">
-        <input type="file" id="fileInput" accept=".pdf" class="hidden">
-        <p class="text-gray-600 font-medium">Drag and drop your PDF here, or <span class="text-blue-600 font-semibold underline">browse</span></p>
+        <input type="file" id="fileInput" accept=".pdf,.txt,.json,.csv,.xlsx,.xls" class="hidden">
+        <p class="text-gray-600 font-medium">Drag and drop your file here (.pdf, .txt, .json, .csv, .xlsx), or <span class="text-blue-600 font-semibold underline">browse</span></p>
     </div>
 
     <!-- File Information Display -->
@@ -55,6 +57,9 @@
         const progressText = document.getElementById('progressText');
         let jsonString = '';
 
+        // Configure worker for PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
         // Drag and drop event handlers
         dropZone.addEventListener('click', () => fileInput.click());
         
@@ -78,106 +83,156 @@
 
         fileInput.addEventListener('change', handleFile);
 
+        // Universal Main File Router
         async function handleFile(e) {
             const file = e.target.files[0];
             if (!file) return;
 
-            // Validate PDF file format
-            if (file.type !== 'application/pdf') {
-                alert('Invalid file type. Please upload a valid PDF document.');
-                return;
-            }
-
-            // Display file metadata (Name and Size)
+            const fileName = file.name;
+            const fileExt = fileName.split('.').pop().toLowerCase();
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-            fileInfo.textContent = `Selected File: ${file.name} (${fileSizeMB} MB)`;
             
-            // Show progress bar
+            fileInfo.textContent = `Selected File: ${fileName} (${fileSizeMB} MB)`;
             progressContainer.classList.remove('hidden');
-            updateProgress(10, "Reading file buffer...");
+            updateProgress(20, `Routing parser for .${fileExt} file...`);
 
-            const reader = new FileReader();
-            reader.readAsArrayBuffer(file);
-            
-            reader.onload = async function() {
-                try {
-                    updateProgress(30, "Initializing PDF layout engine...");
-                    const typedarray = new Uint8Array(this.result);
+            try {
+                let resultObject = null;
+
+                if (fileExt === 'pdf') {
+                    resultObject = await parsePDF(file);
+                } else if (fileExt === 'txt') {
+                    resultObject = await parseTXT(file);
+                } else if (fileExt === 'json') {
+                    resultObject = await parseJSONFile(file);
+                } else if (fileExt === 'csv' || fileExt === 'xlsx' || fileExt === 'xls') {
+                    resultObject = await parseSpreadsheet(file, fileExt);
+                } else {
+                    throw new Error(`Unsupported file format: .${fileExt}`);
+                }
+
+                jsonString = JSON.stringify(resultObject, null, 2);
+                outputArea.value = jsonString;
+                downloadBtn.style.display = 'inline-block';
+                
+                updateProgress(100, "Conversion complete!");
+                statusDiv.textContent = `Successfully parsed .${fileExt} document!`;
+                
+                setTimeout(() => progressContainer.classList.add('hidden'), 2500);
+
+            } catch (err) {
+                progressContainer.classList.add('hidden');
+                statusDiv.textContent = `Error processing file: ${err.message}`;
+                console.error(err);
+            }
+        }
+
+        // 1. PDF Parser (with coordinate layout sorting)
+        async function parsePDF(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let structuredPages = [];
+            const totalPages = pdf.numPages;
+
+            for (let i = 1; i <= totalPages; i++) {
+                const percent = 20 + Math.floor((i / totalPages) * 70);
+                updateProgress(percent, `Processing PDF page ${i} of ${totalPages}...`);
+
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                
+                const items = textContent.items.sort((a, b) => {
+                    const yA = a.transform[5];
+                    const yB = b.transform[5];
+                    const xA = a.transform[4];
+                    const xB = b.transform[4];
                     
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-                    const pdf = await pdfjsLib.getDocument({ data: typedarray }).promise;
-                    
-                    let structuredPages = [];
-                    const totalPages = pdf.numPages;
+                    if (Math.abs(yA - yB) > 5) {
+                        return yB - yA;
+                    }
+                    return xA - xB;
+                });
 
-                    for (let i = 1; i <= totalPages; i++) {
-                        // Dynamically scale progress bar based on page completion
-                        const percent = 30 + Math.floor((i / totalPages) * 60);
-                        updateProgress(percent, `Processing page ${i} of ${totalPages}...`);
+                let lines = [];
+                let currentLine = [];
+                let lastY = null;
 
-                        const page = await pdf.getPage(i);
-                        const textContent = await page.getTextContent();
-                        
-                        // 1. Sort text items by Y (top-to-bottom) and then X (left-to-right) coordinates
-                        const items = textContent.items.sort((a, b) => {
-                            const yA = a.transform[5];
-                            const yB = b.transform[5];
-                            const xA = a.transform[4];
-                            const xB = b.transform[4];
-                            
-                            if (Math.abs(yA - yB) > 5) {
-                                return yB - yA; // PDF Y-coordinates start from bottom, so higher Y is top
-                            }
-                            return xA - xB; // Left to right
-                        });
-
-                        // 2. Group items into clean visual lines
-                        let lines = [];
-                        let currentLine = [];
-                        let lastY = null;
-
-                        items.forEach(item => {
-                            let y = item.transform[5];
-                            if (lastY === null || Math.abs(y - lastY) > 5) {
-                                if (currentLine.length > 0) {
-                                    lines.push(currentLine.map(i => i.str).join(' '));
-                                    currentLine = [];
-                                }
-                                lastY = y;
-                            }
-                            currentLine.push(item);
-                        });
+                items.forEach(item => {
+                    let y = item.transform[5];
+                    if (lastY === null || Math.abs(y - lastY) > 5) {
                         if (currentLine.length > 0) {
                             lines.push(currentLine.map(i => i.str).join(' '));
+                            currentLine = [];
                         }
-
-                        structuredPages.push({
-                            pageNumber: i,
-                            lines: lines
-                        });
+                        lastY = y;
                     }
-
-                    const resultObject = {
-                        fileName: file.name,
-                        totalPages: pdf.numPages,
-                        pages: structuredPages
-                    };
-
-                    jsonString = JSON.stringify(resultObject, null, 2);
-                    outputArea.value = jsonString;
-                    downloadBtn.style.display = 'inline-block';
-                    
-                    updateProgress(100, "Conversion complete!");
-                    statusDiv.textContent = "Conversion complete and accurately sorted!";
-                    
-                    // Hide progress bar shortly after completion
-                    setTimeout(() => progressContainer.classList.add('hidden'), 2500);
-
-                } catch (err) {
-                    progressContainer.classList.add('hidden');
-                    statusDiv.textContent = "Error processing PDF. The file may be password-protected or corrupted.";
-                    console.error(err);
+                    currentLine.push(item);
+                });
+                if (currentLine.length > 0) {
+                    lines.push(currentLine.map(i => i.str).join(' '));
                 }
+
+                structuredPages.push({
+                    pageNumber: i,
+                    lines: lines
+                });
+            }
+
+            return {
+                fileName: file.name,
+                fileType: 'pdf',
+                totalPages: pdf.numPages,
+                pages: structuredPages
+            };
+        }
+
+        // 2. Text Parser (.txt)
+        async function parseTXT(file) {
+            updateProgress(60, 'Reading text file...');
+            const rawText = await file.text();
+            const lines = rawText.split(/\r?\n/);
+            return {
+                fileName: file.name,
+                fileType: 'txt',
+                totalLines: lines.length,
+                lines: lines
+            };
+        }
+
+        // 3. JSON Parser & Validator (.json)
+        async function parseJSONFile(file) {
+            updateProgress(60, 'Validating JSON structure...');
+            const rawText = await file.text();
+            try {
+                const parsed = JSON.parse(rawText);
+                return {
+                    fileName: file.name,
+                    fileType: 'json',
+                    validJSON: true,
+                    data: parsed
+                };
+            } catch (err) {
+                throw new Error(`Malformed JSON syntax: ${err.message}`);
+            }
+        }
+
+        // 4. Spreadsheet & CSV Parser (.csv, .xlsx, .xls)
+        async function parseSpreadsheet(file, ext) {
+            updateProgress(60, `Parsing ${ext.toUpperCase()} spreadsheet...`);
+            const arrayBuffer = await file.arrayBuffer();
+            const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+            const sheetsData = {};
+            workbook.SheetNames.forEach(sheetName => {
+                const worksheet = workbook.Sheets[sheetName];
+                sheetsData[sheetName] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+            });
+
+            return {
+                fileName: file.name,
+                fileType: ext,
+                sheetNames: workbook.SheetNames,
+                sheets: sheetsData
             };
         }
 
