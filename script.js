@@ -24,6 +24,13 @@ const ocrOptionsDiv = document.getElementById('ocrOptions');
 const ocrLanguageSelect = document.getElementById('ocrLanguage');
 const forceOcrAllCheckbox = document.getElementById('forceOcrAll');
 
+// Phase 6 Table Intelligence UI Elements
+const enableTableIntelligenceCheckbox = document.getElementById('enableTableIntelligence');
+const tableIntelligenceOptionsDiv = document.getElementById('tableIntelligenceOptions');
+const spreadsheetStructureSelect = document.getElementById('spreadsheetStructure');
+const extractFormulasCheckbox = document.getElementById('extractFormulas');
+const detectPdfTablesCheckbox = document.getElementById('detectPdfTables');
+
 let jsonString = '';
 let reportString = '';
 
@@ -40,6 +47,12 @@ if (enableBibleModeCheckbox) {
 if (enableOcrCheckbox) {
     enableOcrCheckbox.addEventListener('change', () => {
         ocrOptionsDiv.classList.toggle('hidden', !enableOcrCheckbox.checked);
+    });
+}
+
+if (enableTableIntelligenceCheckbox) {
+    enableTableIntelligenceCheckbox.addEventListener('change', () => {
+        tableIntelligenceOptionsDiv.classList.toggle('hidden', !enableTableIntelligenceCheckbox.checked);
     });
 }
 
@@ -112,7 +125,7 @@ async function handleFile(e) {
         updateProgress(100, 'Conversion complete!');
         statusDiv.textContent = isBibleMode 
             ? `Successfully converted Bible document to structured canon JSON!`
-            : `Successfully parsed .${fileExt} document!`;
+            : `Successfully parsed .${fileExt} document with Phase 6 Table Intelligence!`;
 
     } catch (error) {
         console.error('Extraction Error:', error);
@@ -124,7 +137,7 @@ async function handleFile(e) {
 }
 
 // -------------------------------------------------------------
-// Parser 1: PDF Parser with Phase 5 OCR Fallback
+// Parser 1: PDF Parser with Phase 5 OCR & Phase 6 Table Grid Detection
 // -------------------------------------------------------------
 async function parsePDF(file) {
     const arrayBuffer = await file.arrayBuffer();
@@ -136,6 +149,7 @@ async function parsePDF(file) {
     const isOcrEnabled = enableOcrCheckbox && enableOcrCheckbox.checked;
     const ocrLang = ocrLanguageSelect ? ocrLanguageSelect.value : 'spa';
     const forceOcr = forceOcrAllCheckbox ? forceOcrAllCheckbox.checked : false;
+    const detectTables = enableTableIntelligenceCheckbox && detectPdfTablesCheckbox && detectPdfTablesCheckbox.checked;
 
     for (let i = 1; i <= numPages; i++) {
         const percent = 10 + Math.floor((i / numPages) * 60);
@@ -143,7 +157,7 @@ async function parsePDF(file) {
         
         const page = await pdfDoc.getPage(i);
         const textContent = await page.getTextContent();
-        const viewport = page.getViewport({ scale: 1.5 }); // Higher scale for better OCR quality
+        const viewport = page.getViewport({ scale: 1.5 });
 
         let textItems = textContent.items.map(item => ({
             text: item.str,
@@ -157,7 +171,6 @@ async function parsePDF(file) {
         let pageSourceType = "native_text";
         let ocrConfidenceScore = null;
 
-        // Phase 5: Check if page has no usable text or if OCR is forced
         const totalCharCount = textItems.reduce((acc, curr) => acc + curr.text.trim().length, 0);
         if (isOcrEnabled && (forceOcr || totalCharCount < 15)) {
             updateProgress(percent, `Running OCR on scanned page ${i} of ${numPages}...`);
@@ -170,13 +183,19 @@ async function parsePDF(file) {
 
         const sortedBlocks = sortTextByColumnsAndReadingOrder(textItems, viewport.width);
         
+        let detectedTablesList = [];
+        if (detectTables) {
+            detectedTablesList = detectTablesInTextItems(textItems, viewport.width);
+        }
+        
         structuredPages.push({
             pageNumber: i,
             width: viewport.width,
             height: viewport.height,
             sourceType: pageSourceType,
             ocrConfidence: ocrConfidenceScore,
-            layout: sortedBlocks
+            layout: sortedBlocks,
+            tables: detectedTablesList
         });
     }
 
@@ -186,6 +205,36 @@ async function parsePDF(file) {
         totalPages: numPages,
         pages: structuredPages
     };
+}
+
+// Phase 6: PDF Table Grid & Alignment Detection
+function detectTablesInTextItems(items, pageWidth) {
+    if (!items || items.length === 0) return [];
+
+    const rowMap = {};
+    items.forEach(item => {
+        const yBucket = Math.round(item.y / 12) * 12;
+        if (!rowMap[yBucket]) rowMap[yBucket] = [];
+        rowMap[yBucket].push(item);
+    });
+
+    const rows = Object.keys(rowMap)
+        .sort((a, b) => b - a)
+        .map(y => {
+            const rowItems = rowMap[y];
+            rowItems.sort((i1, i2) => i1.x - i2.x);
+            return rowItems.map(i => i.text.trim());
+        });
+
+    const tableRows = rows.filter(r => r.length >= 2);
+    if (tableRows.length < 3) return [];
+
+    return [{
+        tableStructureConfidence: tableRows.length > 5 ? "high" : "moderate",
+        rowCount: tableRows.length,
+        columnCountEstimated: Math.max(...tableRows.map(r => r.length)),
+        rows: tableRows
+    }];
 }
 
 async function performOcrOnPage(page, viewport, lang) {
@@ -206,16 +255,13 @@ async function performOcrOnPage(page, viewport, lang) {
         const items = words.map(w => ({
             text: w.text,
             x: w.bbox.x0,
-            y: viewport.height - w.bbox.y1, // Flip coordinate system for consistency
+            y: viewport.height - w.bbox.y1,
             width: w.bbox.x1 - w.bbox.x0,
             height: w.bbox.y1 - w.bbox.y0,
             fontName: 'OCR-Font'
         }));
 
-        return {
-            items: items,
-            confidence: ret.data.confidence || 0
-        };
+        return { items: items, confidence: ret.data.confidence || 0 };
     } catch (err) {
         console.error("OCR execution failed:", err);
         return { items: [], confidence: 0 };
@@ -241,7 +287,6 @@ function sortTextByColumnsAndReadingOrder(items, pageWidth) {
     });
 
     const sortByYDesc = (a, b) => b.y - a.y || a.x - b.x;
-
     leftColumn.sort(sortByYDesc);
     rightColumn.sort(sortByYDesc);
     fullWidthElements.sort(sortByYDesc);
@@ -290,45 +335,68 @@ async function parseJSONFile(file) {
 }
 
 // -------------------------------------------------------------
-// Parser 4: Spreadsheet & CSV Parser (.csv, .xlsx, .xls)
+// Parser 4: Phase 6 Spreadsheet & Table Intelligence Parser (.csv, .xlsx, .xls)
 // -------------------------------------------------------------
 async function parseSpreadsheet(file, ext) {
-    updateProgress(50, `Parsing ${ext.toUpperCase()} spreadsheet...`);
+    updateProgress(50, `Parsing ${ext.toUpperCase()} spreadsheet with Phase 6 Table Intelligence...`);
     const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    
+    const extractFormulas = enableTableIntelligenceCheckbox && extractFormulasCheckbox && extractFormulasCheckbox.checked;
+    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellFormula: extractFormulas, cellDates: true });
     
     const preserveStrings = preserveStringsCheckbox ? preserveStringsCheckbox.checked : true;
     const rawOption = !preserveStrings;
+    const structureMode = spreadsheetStructureSelect ? spreadsheetStructureSelect.value : 'objects';
 
     if (ext === 'csv') {
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: rawOption });
         
+        let rowsData;
+        if (structureMode === 'arrays') {
+            rowsData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: rawOption });
+        } else {
+            rowsData = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: rawOption });
+        }
+
         return {
             fileName: file.name,
             fileType: 'csv',
-            totalRows: rows.length,
-            rows: rows
+            structureFormat: structureMode,
+            totalRows: rowsData.length,
+            data: rowsData
         };
     }
 
     const sheetsData = {};
     workbook.SheetNames.forEach(sheetName => {
         const worksheet = workbook.Sheets[sheetName];
-        sheetsData[sheetName] = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: rawOption });
+        let sheetRows;
+
+        if (structureMode === 'arrays') {
+            sheetRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: rawOption });
+        } else {
+            sheetRows = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: rawOption });
+        }
+
+        sheetsData[sheetName] = {
+            sheetOrderIndex: workbook.SheetNames.indexOf(sheetName) + 1,
+            rowCount: sheetRows.length,
+            rows: sheetRows
+        };
     });
 
     return {
         fileName: file.name,
         fileType: ext,
+        structureFormat: structureMode,
         sheetNames: workbook.SheetNames,
         sheets: sheetsData
     };
 }
 
 // =============================================================
-// PHASE 4 & 5: BIBLE CONVERSION & VALIDATION ENGINE
+// BIBLE CONVERSION & VALIDATION ENGINE
 // =============================================================
 
 const KNOWN_BIBLE_BOOKS = [
@@ -392,7 +460,7 @@ async function processBibleData(parsedDocument, originalFileName) {
             sourceFileName: originalFileName,
             convertedAt: new Date().toISOString(),
             copyrightInfo: "Source text preserved as provided.",
-            converterVersion: "Phase 5 - OCR & Canon Engine v1.0"
+            converterVersion: "Phase 6 - Table & Canon Engine v1.0"
         },
         canon: bibleStructure
     };
@@ -497,7 +565,7 @@ function parseBibleTextStream(lines, stripFootnotes) {
 }
 
 // -------------------------------------------------------------
-// Validation & Quality Assurance Module (Including OCR Confidence Check)
+// Validation & Quality Assurance Module
 // -------------------------------------------------------------
 function validateBibleStructure(parsedDoc, bibleStructure) {
     let totalBooks = bibleStructure.length;
@@ -522,6 +590,11 @@ function validateBibleStructure(parsedDoc, bibleStructure) {
                     reportLines.push(`  [WARNING] Page ${p.pageNumber}: Low OCR confidence score (<75%). Manual inspection recommended.`);
                     lowConfidencePages++;
                 }
+            }
+            if (p.tables && p.tables.length > 0) {
+                p.tables.forEach((t, tIdx) => {
+                    reportLines.push(`[TABLE DETECTED] Page ${p.pageNumber}, Table ${tIdx + 1}: ${t.rowCount} rows, ${t.columnCountEstimated} estimated columns (Confidence: ${t.tableStructureConfidence})`);
+                });
             }
         });
         reportLines.push("");
