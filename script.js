@@ -282,6 +282,7 @@ async function parseSpreadsheet(file, ext) {
 // =============================================================
 
 const KNOWN_BIBLE_BOOKS = [
+    // --- SPANISH & ENGLISH ---
     "Génesis", "Genesis", "Éxodo", "Exodo", "Exodus", "Levítico", "Levitico", "Leviticus",
     "Números", "Numeros", "Numbers", "Deuteronomio", "Deuteronomy", "Josué", "Josue", "Joshua",
     "Jueces", "Judges", "Rut", "Ruth", "1 Samuel", "2 Samuel", "1 Reyes", "1 Kings", "2 Reyes", "2 Kings",
@@ -298,7 +299,40 @@ const KNOWN_BIBLE_BOOKS = [
     "Colosenses", "Colossians", "1 Tesalonicenses", "1 Thessalonians", "2 Tesalonicenses", "2 Thessalonians",
     "1 Timoteo", "1 Timothy", "2 Timoteo", "2 Timothy", "Tito", "Titus", "Filemón", "Filemon", "Philemon",
     "Hebreos", "Hebrews", "Santiago", "James", "1 Pedro", "1 Peter", "2 Pedro", "2 Peter",
-    "1 Juan", "1 John", "2 Juan", "2 John", "3 Juan", "3 John", "Judas", "Jude", "Apocalipsis", "Revelation"
+    "1 Juan", "1 John", "2 Juan", "2 John", "3 Juan", "3 John", "Judas", "Jude", "Apocalipsis", "Revelation",
+
+    // --- FRENCH (FRANÇAIS) ---
+    "Genèse", "Exode", "Lévitique", "Nombres", "Deutéronome", "Josué", "Juges", "Ruth",
+    "1 Samuel", "2 Samuel", "1 Rois", "2 Rois", "1 Chroniques", "2 Chroniques", "Esdras", "Néhémie",
+    "Esther", "Job", "Psaumes", "Proverbes", "Ecclésiaste", "Cantique des Cantiques", "Ésaïe",
+    "Jérémie", "Lamentations", "Ézéchiel", "Daniel", "Osée", "Joël", "Amos", "Abdias", "Jonas",
+    "Michée", "Nahum", "Habacuc", "Sophonie", "Aggée", "Zacharie", "Malachie",
+    "Matthieu", "Marc", "Luc", "Jean", "Actes", "Romains", "1 Corinthiens", "2 Corinthiens",
+    "Galates", "Éphésiens", "Philippiens", "Colossiens", "1 Thessaloniciens", "2 Thessaloniciens",
+    "1 Timothée", "2 Timothée", "Tite", "Philémon", "Hébreux", "Jacques", "1 Pierre", "2 Pierre",
+    "1 Jean", "2 Jean", "3 Jean", "Judas", "Apocalypse",
+
+    // --- TAGALOG ---
+    "Genesis", "Exodo", "Levitico", "Mga Bilang", "Deuteronomio", "Josue", "Mga Hukom", "Ruth",
+    "1 Samuel", "2 Samuel", "1 Mga Hari", "2 Mga Hari", "1 Cronica", "2 Cronica", "Esdras", "Nehemias",
+    "Ester", "Job", "Mga Awit", "Kawikaan", "Eclesiastes", "Awit ni Solomon", "Isaias",
+    "Jeremias", "Mga Panaghoy", "Ezekiel", "Daniel", "Oseas", "Joel", "Amos", "Obadias", "Jonas",
+    "Mikas", "Nahum", "Habacuc", "Zefanias", "Hageo", "Zacarias", "Malakias",
+    "Mateo", "Marcos", "Lucas", "Juan", "Mga Gawa", "Roma", "1 Corinto", "2 Corinto",
+    "Galacia", "Efeso", "Filipos", "Colosas", "1 Tesalonica", "2 Tesalonica",
+    "1 Timoteo", "2 Timoteo", "Tito", "Filemon", "Hebreo", "Santiago", "1 Pedro", "2 Pedro",
+    "1 Juan", "2 Juan", "3 Juan", "Judas", "Apocalipsis",
+
+    // --- EWE (ƐWƐGBE) ---
+    "Genesis", "Exodos", "Leviticus", "Numeros", "Deuteronomio", "Yoshua", "Ʋɔdrɔlawo", "Rut",
+    "Samuel 1", "Samuel 2", "Fiawo 1", "Fiawo 2", "Kronika 1", "Kronika 2", "Esdra", "Nehemia",
+    "Ester", "Job", "Psalmo", "Lododowo", "Nyagblɔla", "Hadzidza Fe Hadzidza", "Yesaya",
+    "Yeremiya", "Avalagbe", "Ezekiel", "Daniel", "Hosea", "Joel", "Amos", "Obadia", "Jona",
+    "Mika", "Nahum", "Habakuk", "Sefania", "Hagai", "Zekaria", "Malaki",
+    "Mateo", "Marko", "Luka", "Yohanes", "Dɔwɔwɔwo", "Romalɔwo", "Korintotɔwo 1", "Korintotɔwo 2",
+    "Galatiatɔwo", "Efesotɔwo", "Filipitɔwo", "Kolosetɔwo", "Tesalonikatɔwo 1", "Tesalonikatɔwo 2",
+    "Timoteo 1", "Timoteo 2", "Tito", "Filemon", "Hebritɔwo", "Yakobo", "Petro 1", "Petro 2",
+    "Yohanes 1", "Yohanes 2", "Yohanes 3", "Yuda", "Nyaɖeɖefia"
 ];
 
 async function processBibleData(parsedDocument, originalFileName) {
@@ -364,17 +398,14 @@ function parseBibleTextStream(lines, stripFootnotes) {
     let currentChapter = null;
     let currentVerse = null;
 
-    const chapterRegex = /^(?:CAPÍTULO|CAPITULO|CHAPTER)\s+(\d+)/i;
+    const chapterRegex = /^(?:CAPÍTULO|CAPITULO|CHAPTER|CHAPITRE|TALA|TA)\s+(\d+)/i;
     const verseNumRegex = /^(\d+)\s+(.*)/;
-
-    // Single-letter footnote markers commonly present in LDS/KJV study editions
     const footnoteMarkers = /^[a-z]$/i;
 
     lines.forEach(line => {
         let trimmed = line.trim();
         if (!trimmed) return;
 
-        // Strip non-verse header noise
         if (trimmed === "SANTA BIBLIA" || trimmed === "Antiguo Testamento" || trimmed === "Nuevo Testamento") return;
 
         if (stripFootnotes && (footnoteMarkers.test(trimmed) || trimmed === "GEE" || trimmed === "HEB" || trimmed === "TJS")) {
