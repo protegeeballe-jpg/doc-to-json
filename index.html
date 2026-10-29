@@ -8,6 +8,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <!-- Include SheetJS (xlsx/csv) library from CDN -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Include Tesseract.js OCR library from CDN (Phase 5) -->
+    <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
     <!-- Include Tailwind CSS for modern UI styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -29,7 +31,7 @@
     </div>
 
     <!-- Phase 4: Bible Processing Mode Options Card -->
-    <div class="mb-4 text-left text-sm text-gray-700 bg-blue-50 border border-blue-200 p-4 rounded-lg shadow-sm">
+    <div class="mb-3 text-left text-sm text-gray-700 bg-blue-50 border border-blue-200 p-4 rounded-lg shadow-sm">
         <div class="flex items-center justify-between mb-2">
             <label class="flex items-center cursor-pointer select-none font-semibold text-blue-900">
                 <input type="checkbox" id="enableBibleMode" class="mr-2 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
@@ -64,6 +66,36 @@
                 <label class="flex items-center cursor-pointer text-xs select-none">
                     <input type="checkbox" id="runValidation" class="mr-1.5 h-3.5 w-3.5 text-blue-600 rounded" checked>
                     <span>Perform Canon Validation Checks</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Phase 5: OCR for Scanned Documents Options Card -->
+    <div class="mb-4 text-left text-sm text-gray-700 bg-amber-50 border border-amber-200 p-4 rounded-lg shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+            <label class="flex items-center cursor-pointer select-none font-semibold text-amber-900">
+                <input type="checkbox" id="enableOcr" class="mr-2 h-4 w-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500">
+                <span>Enable OCR Fallback for Scanned / Image PDFs (Phase 5)</span>
+            </label>
+            <span class="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded font-medium">Tesseract.js</span>
+        </div>
+
+        <div id="ocrOptions" class="hidden grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 pt-3 border-t border-amber-200">
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1" for="ocrLanguage">OCR Recognition Language</label>
+                <select id="ocrLanguage" class="w-full text-xs p-2 rounded border border-gray-300 focus:ring-1 focus:ring-amber-500">
+                    <option value="spa">Spanish (spa)</option>
+                    <option value="eng">English (eng)</option>
+                    <option value="fra">French (fra)</option>
+                    <option value="tgl">Tagalog (tgl)</option>
+                    <option value="ewe">Ewe (ewe)</option>
+                </select>
+            </div>
+            <div class="flex items-center pt-5">
+                <label class="flex items-center cursor-pointer text-xs select-none">
+                    <input type="checkbox" id="forceOcrAll" class="mr-1.5 h-3.5 w-3.5 text-amber-600 rounded">
+                    <span>Force OCR on all pages (ignore existing text layer)</span>
                 </label>
             </div>
         </div>
